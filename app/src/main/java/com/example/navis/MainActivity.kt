@@ -1,7 +1,6 @@
 package com.example.navis
 
 import android.Manifest
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.Location
 import android.os.Bundle
@@ -67,6 +66,11 @@ import com.google.android.gms.location.LocationCallback
 import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.Priority
+import android.content.Intent
+import androidx.compose.material3.Button
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.foundation.shape.RoundedCornerShape
 
 
 
@@ -1671,6 +1675,8 @@ class MainActivity : ComponentActivity() {
             "NAVIS_OFF_ROUTE",
             "Distance from planned route: $minimumDistance meters"
         )
+        RouteProgressState.isOffRoute.value =
+            minimumDistance > offRouteThreshold
         if (
             minimumDistance > offRouteThreshold &&
             !offRouteWarningGiven
@@ -1749,8 +1755,13 @@ class MainActivity : ComponentActivity() {
         ) {
 
             destinationReached = true
-            navigationActive = false
+            RouteProgressState.destinationReached.value = true
+            navigationActive = true
+            offRouteWarningGiven = false
             offRouteMonitoringEnabled = false
+            RouteProgressState.isOffRoute.value = false
+            RouteProgressState.currentInstructionIndex.value = 0
+            RouteProgressState.destinationReached.value = false
 
             try {
                 fusedLocationClient.removeLocationUpdates(
@@ -3888,16 +3899,37 @@ class MainActivity : ComponentActivity() {
             val maneuvers = leg.getJSONArray("maneuvers")
 
             val instructions = mutableListOf<String>()
+            val routeDistances = mutableListOf<String>()
 
             for (i in 0 until maneuvers.length()) {
 
                 val maneuver = maneuvers.getJSONObject(i)
                 val instruction = maneuver.optString("instruction")
 
+                val length =
+                    maneuver.optDouble("length", 0.0)
+
                 if (instruction.isNotEmpty()) {
+
                     instructions.add(
                         translateNavigationInstruction(instruction)
                     )
+
+                    val distanceText =
+                        if (length < 1.0) {
+                            "${(length * 1000).toInt()} m"
+                        } else {
+                            if (length == length.toInt().toDouble()) {
+                                "${length.toInt()} km"
+                            } else {
+                                String.format(
+                                    "%.1f km",
+                                    length
+                                )
+                            }
+                        }
+
+                    routeDistances.add(distanceText)
                 }
             }
 
@@ -3927,6 +3959,7 @@ class MainActivity : ComponentActivity() {
 
                             interruptedRouteIndex = index
                             interruptedRouteInstruction = instructions[index]
+                            RouteProgressState.currentInstructionIndex.value = index
 
                             Log.d(
                                 "NAVIS_ROUTE",
@@ -3987,6 +4020,8 @@ class MainActivity : ComponentActivity() {
              * Queue each instruction.
              */
             currentRouteInstructions = instructions
+            RouteProgressState.routeInstructions.value = instructions
+            RouteProgressState.routeDistances.value = routeDistances
             for (i in instructions.indices) {
 
                 textToSpeech.speak(
@@ -4146,6 +4181,7 @@ fun NavIsScreen(
     onLanguageSelected: ((String, String) -> Unit)? = null,
     cameraPreview: @Composable (() -> Unit)? = null
 ) {
+    val context = LocalContext.current
 
     var languageMenuExpanded by remember {
         mutableStateOf(false)
@@ -4163,9 +4199,7 @@ fun NavIsScreen(
 
         cameraPreview?.invoke()
 
-
-        // LANGUAGE DROPDOWN - TOP RIGHT
-        // LANGUAGE DROPDOWN - TOP RIGHT
+        // LANGUAGE + ROUTE PROGRESS - TOP RIGHT
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -4173,144 +4207,181 @@ fun NavIsScreen(
             contentAlignment = Alignment.TopEnd
         ) {
 
-            Box {
+            Column(
+                horizontalAlignment = Alignment.End
+            ) {
 
-                Text(
-                    text = "Language ▾",
-                    color = Color.DarkGray,
-                    fontSize = 18.sp,
-                    modifier = Modifier.clickable {
-                        languageMenuExpanded = true
+                Box {
+
+                    Button(
+                        onClick = {
+                            languageMenuExpanded = true
+                        },
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF7C3AED),
+                            contentColor = Color.White
+                        )
+                    ) {
+                        Text(
+                            text = "Language ▾",
+                            fontSize = 16.sp
+                        )
                     }
-                )
 
-                DropdownMenu(
-                    expanded = languageMenuExpanded,
-                    onDismissRequest = {
-                        languageMenuExpanded = false
+                    DropdownMenu(
+                        expanded = languageMenuExpanded,
+                        onDismissRequest = {
+                            languageMenuExpanded = false
+                        },
+                        containerColor = Color.DarkGray
+                    ) {
+
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = "English",
+                                    color = Color.White
+                                )
+                            },
+                            onClick = {
+                                languageMenuExpanded = false
+                                onLanguageSelected?.invoke(
+                                    "English (UK)",
+                                    "en-GB"
+                                )
+                            }
+                        )
+
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = "English (India)",
+                                    color = Color.White
+                                )
+                            },
+                            onClick = {
+                                languageMenuExpanded = false
+                                onLanguageSelected?.invoke(
+                                    "English (India)",
+                                    "en-IN"
+                                )
+                            }
+                        )
+
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = "हिन्दी",
+                                    color = Color.White
+                                )
+                            },
+                            onClick = {
+                                languageMenuExpanded = false
+                                onLanguageSelected?.invoke(
+                                    "Hindi",
+                                    "hi-IN"
+                                )
+                            }
+                        )
+
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = "தமிழ்",
+                                    color = Color.White
+                                )
+                            },
+                            onClick = {
+                                languageMenuExpanded = false
+                                onLanguageSelected?.invoke(
+                                    "Tamil",
+                                    "ta-IN"
+                                )
+                            }
+                        )
+
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = "తెలుగు",
+                                    color = Color.White
+                                )
+                            },
+                            onClick = {
+                                languageMenuExpanded = false
+                                onLanguageSelected?.invoke(
+                                    "Telugu",
+                                    "te-IN"
+                                )
+                            }
+                        )
+
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = "বাংলা",
+                                    color = Color.White
+                                )
+                            },
+                            onClick = {
+                                languageMenuExpanded = false
+                                onLanguageSelected?.invoke(
+                                    "Bengali",
+                                    "bn-IN"
+                                )
+                            }
+                        )
+
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = "मराठी",
+                                    color = Color.White
+                                )
+                            },
+                            onClick = {
+                                languageMenuExpanded = false
+                                onLanguageSelected?.invoke(
+                                    "Marathi",
+                                    "mr-IN"
+                                )
+                            }
+                        )
+                    }
+                }
+
+                Button(
+                    onClick = {
+                        val intent = Intent(
+                            context,
+                            RouteProgressActivity::class.java
+                        )
+
+                        intent.putExtra(
+                            "DESTINATION_NAME",
+                            destinationText
+                        )
+
+                        context.startActivity(intent)
                     },
-                    containerColor = Color.DarkGray
+                    modifier = Modifier.padding(top = 8.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF7C3AED),
+                        contentColor = Color.White
+                    )
                 ) {
-
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                text = "English",
-                                color = Color.White
-                            )
-                        },
-                        onClick = {
-                            languageMenuExpanded = false
-                            onLanguageSelected?.invoke(
-                                "English (UK)",
-                                "en-GB"
-                            )
-                        }
-                    )
-
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                text = "English (India)",
-                                color = Color.White
-                            )
-                        },
-                        onClick = {
-                            languageMenuExpanded = false
-                            onLanguageSelected?.invoke(
-                                "English (India)",
-                                "en-IN"
-                            )
-                        }
-                    )
-
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                text = "हिन्दी",
-                                color = Color.White
-                            )
-                        },
-                        onClick = {
-                            languageMenuExpanded = false
-                            onLanguageSelected?.invoke(
-                                "Hindi",
-                                "hi-IN"
-                            )
-                        }
-                    )
-
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                text = "தமிழ்",
-                                color = Color.White
-                            )
-                        },
-                        onClick = {
-                            languageMenuExpanded = false
-                            onLanguageSelected?.invoke(
-                                "Tamil",
-                                "ta-IN"
-                            )
-                        }
-                    )
-
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                text = "తెలుగు",
-                                color = Color.White
-                            )
-                        },
-                        onClick = {
-                            languageMenuExpanded = false
-                            onLanguageSelected?.invoke(
-                                "Telugu",
-                                "te-IN"
-                            )
-                        }
-                    )
-
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                text = "বাংলা",
-                                color = Color.White
-                            )
-                        },
-                        onClick = {
-                            languageMenuExpanded = false
-                            onLanguageSelected?.invoke(
-                                "Bengali",
-                                "bn-IN"
-                            )
-                        }
-                    )
-
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                text = "मराठी",
-                                color = Color.White
-                            )
-                        },
-                        onClick = {
-                            languageMenuExpanded = false
-                            onLanguageSelected?.invoke(
-                                "Marathi",
-                                "mr-IN"
-                            )
-                        }
+                    Text(
+                        text = "Route Progress",
+                        fontSize = 16.sp
                     )
                 }
             }
         }
 
-
         // EXISTING NAVIS CONTENT
         Column(
-
             horizontalAlignment =
                 Alignment.CenterHorizontally,
 
