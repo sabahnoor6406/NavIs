@@ -71,6 +71,9 @@ import androidx.compose.material3.Button
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.foundation.shape.RoundedCornerShape
+import com.google.android.libraries.places.api.model.CircularBounds
+import com.google.android.libraries.places.api.net.SearchNearbyRequest
+import com.google.android.gms.maps.model.LatLng
 
 
 
@@ -496,6 +499,7 @@ class MainActivity : ComponentActivity() {
     private var updateStatus: ((String) -> Unit)? = null
     private var updateResult: ((String) -> Unit)? = null
     private var updateDestination: ((String) -> Unit)? = null
+    private var updateNearbyOptions: ((String) -> Unit)? = null
     private var destinationLatitude: Double? = null
     private var destinationLongitude: Double? = null
     private var destinationName = ""
@@ -504,6 +508,12 @@ class MainActivity : ComponentActivity() {
     private var englishDestinationInputActive = false
     private var destinationReached = false
     private var navigationActive = false
+    private var nearbySearchActive = false
+    private var nearbyCategory = ""
+    private var nearbySelectionActive = false
+    private var nearbyPlaceNames = mutableListOf<String>()
+    private var nearbyPlaceIds = mutableListOf<String>()
+    private var nearbyOptionsSpeaking = false
     private var offRouteWarningGiven = false
     private var offRouteMonitoringEnabled = false
 
@@ -563,6 +573,7 @@ class MainActivity : ComponentActivity() {
                 )
 
                 if (!spokenText.isNullOrEmpty()) {
+                    updateNearbyOptions?.invoke("")
                     val stopCommand =
                         spokenText.trim().equals("stop", ignoreCase = true) ||
                                 spokenText.trim().equals("रुकें", ignoreCase = true) ||
@@ -607,6 +618,161 @@ class MainActivity : ComponentActivity() {
                         updateResult?.invoke(
                             "Voice instructions stopped"
                         )
+
+                        return@registerForActivityResult
+                    }
+
+                    if (nearbySelectionActive) {
+                        val selectionText =
+                            spokenText.trim().lowercase(Locale.UK)
+
+                        val selectedIndex =
+                            when {
+                                selectionText.contains("first") -> 0
+                                selectionText.contains("second") -> 1
+                                selectionText.contains("third") -> 2
+                                selectionText.contains("fourth") -> 3
+                                selectionText.contains("fifth") -> 4
+
+                                else -> {
+                                    nearbyPlaceNames.indexOfFirst { placeName ->
+                                        selectionText.contains(
+                                            placeName.lowercase(Locale.UK)
+                                        )
+                                    }
+                                }
+                            }
+
+                        if (
+                            selectedIndex >= 0 &&
+                            selectedIndex < nearbyPlaceNames.size
+                        ) {
+                            val selectedName =
+                                nearbyPlaceNames[selectedIndex]
+
+                            val selectedPlaceId =
+                                nearbyPlaceIds[selectedIndex]
+
+                            val placeFields = listOf(
+                                Place.Field.ID,
+                                Place.Field.DISPLAY_NAME,
+                                Place.Field.LOCATION
+                            )
+
+                            val fetchRequest =
+                                FetchPlaceRequest.builder(
+                                    selectedPlaceId,
+                                    placeFields
+                                ).build()
+
+                            placesClient.fetchPlace(fetchRequest)
+                                .addOnSuccessListener { response ->
+
+                                    val place = response.place
+                                    val location = place.location
+
+                                    if (location == null) {
+                                        updateStatus?.invoke(
+                                            "Selected place location unavailable"
+                                        )
+                                        speak(
+                                            "I could not get the location of that place."
+                                        )
+                                        return@addOnSuccessListener
+                                    }
+
+                                    destinationLatitude =
+                                        location.latitude
+
+                                    destinationLongitude =
+                                        location.longitude
+
+                                    destinationReached = false
+                                    offRouteWarningGiven = false
+                                    offRouteMonitoringEnabled = false
+
+                                    updateNearbyOptions?.invoke("")
+
+                                    updateDestination?.invoke(
+                                        "Destination: $selectedName"
+                                    )
+
+                                    updateStatus?.invoke(
+                                        "Destination selected"
+                                    )
+
+                                    updateResult?.invoke(
+                                        selectedName
+                                    )
+
+                                    speak(
+                                        "$selectedName selected"
+                                    )
+
+                                    requestLocation()
+                                }
+                                .addOnFailureListener {
+                                    updateStatus?.invoke(
+                                        "Unable to get selected place"
+                                    )
+                                    speak(
+                                        "I could not get the location of that place."
+                                    )
+                                }
+                            updateNearbyOptions?.invoke("")
+                            nearbySelectionActive = false
+
+                            // We will connect the selected place
+                            // to the walking route in the next step.
+
+                            return@registerForActivityResult
+                        }
+
+                        nearbySelectionActive = false
+
+// The user did not select a nearby option.
+// Treat their speech as a new normal destination.
+                        updateStatus?.invoke(
+                            "Searching for new destination..."
+                        )
+
+                        updateResult?.invoke(
+                            spokenText
+                        )
+
+                        val destination =
+                            spokenText
+                                .replace(
+                                    Regex(
+                                        "^take me to\\s+",
+                                        RegexOption.IGNORE_CASE
+                                    ),
+                                    ""
+                                )
+                                .replace(
+                                    Regex(
+                                        "^navigate me to\\s+",
+                                        RegexOption.IGNORE_CASE
+                                    ),
+                                    ""
+                                )
+                                .replace(
+                                    Regex(
+                                        "^navigate to\\s+",
+                                        RegexOption.IGNORE_CASE
+                                    ),
+                                    ""
+                                )
+                                .replace(
+                                    Regex(
+                                        "^go to\\s+",
+                                        RegexOption.IGNORE_CASE
+                                    ),
+                                    ""
+                                )
+                                .trim()
+
+                        searchDestination(destination)
 
                         return@registerForActivityResult
                     }
@@ -683,7 +849,86 @@ class MainActivity : ComponentActivity() {
                     }
 
 
-// Change language command
+                    // Nearby Places category detection
+                    val nearbyCategoryDetected =
+                        if (nearbySelectionActive) {
+                            null
+                        } else {
+                            when {
+                            spokenText.trim().lowercase(Locale.UK).contains("hospital") ->
+                                "hospital"
+
+                            spokenText.trim().lowercase(Locale.UK).contains("bus stop") ->
+                                "bus_stop"
+
+                            spokenText.trim().lowercase(Locale.UK).contains("bus station") ->
+                                "bus_station"
+
+                            spokenText.trim().lowercase(Locale.UK).contains("bus depot") ||
+                                    spokenText.trim().lowercase(Locale.UK).contains("transit depot") ||
+                                    spokenText.trim().lowercase(Locale.UK).contains("depot") ->
+                                "transit_depot"
+
+                                (
+                                        spokenText.trim().lowercase(Locale.UK).contains("railway station") ||
+                                                spokenText.trim().lowercase(Locale.UK).contains("train station")
+                                        ) &&
+                                        (
+                                                spokenText.trim().lowercase(Locale.UK).contains("nearby") ||
+                                                        spokenText.trim().lowercase(Locale.UK).contains("near me") ||
+                                                        spokenText.trim().lowercase(Locale.UK).contains("around me") ||
+                                                        spokenText.trim().lowercase(Locale.UK).contains("close to me")
+                                                ) ->
+                                    "railway_station"
+
+                            spokenText.trim().lowercase(Locale.UK).contains("pharmacy") ||
+                                    spokenText.trim().lowercase(Locale.UK).contains("medical store") ->
+                                "pharmacy"
+
+                            spokenText.trim().lowercase(Locale.UK).contains("atm") ->
+                                "atm"
+
+                            spokenText.trim().lowercase(Locale.UK).contains("bank") ->
+                                "bank"
+
+                            spokenText.trim().lowercase(Locale.UK).contains("petrol station") ||
+                                    spokenText.trim().lowercase(Locale.UK).contains("gas station") ->
+                                "petrol_station"
+
+                            spokenText.trim().lowercase(Locale.UK).contains("restaurant") ->
+                                "restaurant"
+
+                            spokenText.trim().lowercase(Locale.UK).contains("police station") ->
+                                "police_station"
+
+                            spokenText.trim().lowercase(Locale.UK).contains("school") ->
+                                "school"
+
+                                else -> null
+                            }
+                        }
+                    if (nearbyCategoryDetected != null) {
+                        updateDestination?.invoke("")
+                        nearbySearchActive = true
+                        nearbyCategory = nearbyCategoryDetected
+
+                        updateStatus?.invoke(
+                            "Finding nearby places..."
+                        )
+
+                        updateResult?.invoke(
+                            "Nearby search: $nearbyCategoryDetected"
+                        )
+
+                        speak(
+                            "Finding nearby places"
+                        )
+                        requestLocation()
+
+                        return@registerForActivityResult
+                    }
+
+                    // Change language command
                     val changeLanguageCommand =
                         spokenText.trim().equals("change language", ignoreCase = true) ||
                                 spokenText.trim() == "भाषा बदलें" ||
@@ -910,6 +1155,9 @@ class MainActivity : ComponentActivity() {
                 mutableStateOf("")
             }
 
+            var nearbyOptionsText by remember {
+                mutableStateOf("")
+            }
 
             updateStatus = {
                 statusText = it
@@ -923,12 +1171,17 @@ class MainActivity : ComponentActivity() {
                 destinationText = it
             }
 
+            updateNearbyOptions = {
+                nearbyOptionsText = it
+            }
+
 
             NavIsScreen(
                 statusText = statusText,
                 recognizedText = recognizedText,
                 destinationText = destinationText,
                 locationText = locationText,
+                nearbyOptionsText = nearbyOptionsText,
 
                 onScreenTap = {
                     startVoiceInput()
@@ -1303,8 +1556,302 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun searchNearbyPlaces(
+        category: String,
+        latitude: Double,
+        longitude: Double
+    ) {
+        updateStatus?.invoke(
+            "Searching nearby $category"
+        )
 
+        val center = LatLng(
+            latitude,
+            longitude
+        )
+        Log.d(
+            "NAVIS_NEARBY",
+            "Nearby search location: " +
+                    "Latitude=$latitude, Longitude=$longitude"
+        )
 
+        val circle =
+            CircularBounds.newInstance(
+                center,
+                2000.0
+            )
+
+        val placeFields = listOf(
+            Place.Field.ID,
+            Place.Field.DISPLAY_NAME,
+            Place.Field.LOCATION
+        )
+
+        val includedTypes =
+            listOf(category)
+
+        val request =
+            SearchNearbyRequest.builder(
+                circle,
+                placeFields
+            )
+                .setIncludedTypes(includedTypes)
+                .setMaxResultCount(5)
+                .setRankPreference(
+                    SearchNearbyRequest.RankPreference.DISTANCE
+                )
+                .build()
+
+        placesClient.searchNearby(request)
+            .addOnSuccessListener { response ->
+
+                val places = response.places
+
+                if (places.isEmpty()) {
+                    nearbySearchActive = false
+                    nearbyCategory = ""
+
+                    updateStatus?.invoke(
+                        "No nearby places found"
+                    )
+
+                    speak(
+                        "I could not find any nearby $category."
+                    )
+
+                    return@addOnSuccessListener
+                }
+
+                val nearbyPlaces =
+                    places.filter { place ->
+
+                        val location = place.location
+
+                        if (location == null) {
+                            false
+                        } else {
+
+                            val distanceResults = FloatArray(1)
+
+                            Location.distanceBetween(
+                                latitude,
+                                longitude,
+                                location.latitude,
+                                location.longitude,
+                                distanceResults
+                            )
+
+                            val distance =
+                                distanceResults[0]
+
+                            Log.d(
+                                "NAVIS_NEARBY",
+                                "Place: ${place.displayName}, " +
+                                        "Distance: $distance meters"
+                            )
+
+                            distance <= 2000f
+                        }
+                    }
+
+                if (nearbyPlaces.isEmpty()) {
+
+                    nearbySearchActive = false
+                    nearbyCategory = ""
+
+                    updateStatus?.invoke(
+                        "No nearby places found"
+                    )
+
+                    speak(
+                        "I could not find any nearby $category."
+                    )
+
+                    return@addOnSuccessListener
+                }
+
+                val placeNames =
+                    nearbyPlaces.mapNotNull {
+                        it.displayName
+                    }
+
+                nearbyPlaceNames.clear()
+                nearbyPlaceIds.clear()
+
+                for (place in nearbyPlaces) {
+
+                    val name = place.displayName
+                    val id = place.id
+
+                    if (name != null && id != null) {
+                        nearbyPlaceNames.add(name)
+                        nearbyPlaceIds.add(id)
+                    }
+                }
+
+                nearbySelectionActive = true
+
+                nearbySearchActive = false
+                nearbyCategory = ""
+
+                updateStatus?.invoke(
+                    "Nearby places found"
+                )
+
+                updateNearbyOptions?.invoke(
+                    placeNames.mapIndexed { index, name ->
+                        "${index + 1}. $name"
+                    }.joinToString("\n")
+                )
+
+                val spokenPlaces =
+                    placeNames.mapIndexed { index, name ->
+                        "${index + 1}. $name"
+                    }.joinToString(". ")
+
+                nearbyOptionsSpeaking = true
+
+                textToSpeech.setOnUtteranceProgressListener(
+                    object : UtteranceProgressListener() {
+
+                        override fun onStart(utteranceId: String?) {
+                            Log.d(
+                                "NAVIS_NEARBY",
+                                "Nearby options started: $utteranceId"
+                            )
+                        }
+
+                        override fun onDone(utteranceId: String?) {
+                            if (utteranceId == "NEARBY_OPTIONS") {
+
+                                nearbyOptionsSpeaking = false
+
+                                runOnUiThread {
+                                    if (nearbySelectionActive) {
+                                        startVoiceInput()
+                                    }
+                                }
+                            }
+                        }
+
+                        override fun onError(utteranceId: String?) {
+                            nearbyOptionsSpeaking = false
+
+                            Log.e(
+                                "NAVIS_NEARBY",
+                                "Nearby options TTS error: $utteranceId"
+                            )
+                        }
+                    }
+                )
+
+                textToSpeech.speak(
+                    "I found ${placeNames.size} nearby $category. " +
+                            "$spokenPlaces. " +
+                            "Which one would you like?",
+                    TextToSpeech.QUEUE_FLUSH,
+                    null,
+                    "NEARBY_OPTIONS"
+                )
+            }
+            .addOnFailureListener { exception ->
+
+                nearbySearchActive = false
+                nearbyCategory = ""
+
+                Log.e(
+                    "NAVIS_NEARBY",
+                    "Nearby search failed",
+                    exception
+                )
+
+                updateStatus?.invoke(
+                    "Nearby search failed"
+                )
+
+                speak(
+                    "I could not search for nearby places."
+                )
+            }
+    }
+
+    private fun searchRouteLandmarks(
+        latitude: Double,
+        longitude: Double
+    ) {
+        val center = LatLng(
+            latitude,
+            longitude
+        )
+
+        val circle =
+            CircularBounds.newInstance(
+                center,
+                300.0
+            )
+
+        val placeFields = listOf(
+            Place.Field.ID,
+            Place.Field.DISPLAY_NAME,
+            Place.Field.LOCATION
+        )
+
+        val request =
+            SearchNearbyRequest.builder(
+                circle,
+                placeFields
+            )
+                .setMaxResultCount(5)
+                .setRankPreference(
+                    SearchNearbyRequest.RankPreference.DISTANCE
+                )
+                .build()
+
+        placesClient.searchNearby(request)
+            .addOnSuccessListener { response ->
+
+                for (place in response.places) {
+
+                    val name =
+                        place.displayName
+                            ?: continue
+
+                    val location =
+                        place.location
+                            ?: continue
+
+                    if (
+                        location.latitude !in -90.0..90.0 ||
+                        location.longitude !in -180.0..180.0 ||
+                        (location.latitude == 90.0 &&
+                                location.longitude == -180.0)
+                    ) {
+                        Log.w(
+                            "NAVIS_LANDMARK",
+                            "Ignoring invalid landmark coordinates: " +
+                                    "${location.latitude}, " +
+                                    "${location.longitude}"
+                        )
+                        continue
+                    }
+
+                    Log.d(
+                        "NAVIS_LANDMARK",
+                        "Landmark: $name " +
+                                "(${location.latitude}, " +
+                                "${location.longitude})"
+                    )
+                }
+            }
+            .addOnFailureListener { exception ->
+
+                Log.e(
+                    "NAVIS_LANDMARK",
+                    "Landmark search failed",
+                    exception
+                )
+            }
+    }
 
     // -------------------------
     // SEARCH DESTINATION
@@ -1515,6 +2062,15 @@ class MainActivity : ComponentActivity() {
 
                         currentLatitude = latitude
                         currentLongitude = longitude
+
+                        if (nearbySearchActive) {
+                            searchNearbyPlaces(
+                                nearbyCategory,
+                                latitude,
+                                longitude
+                            )
+                            return@addOnSuccessListener
+                        }
 
                         checkDestinationReached(
                             latitude,
@@ -1883,8 +2439,13 @@ class MainActivity : ComponentActivity() {
                             val routeJson =
                                 org.json.JSONObject(responseText)
 
+                            Log.d(
+                                "NAVIS_LANDMARK",
+                                "LANDMARK TEST: route response received"
+                            )
                             val trip =
                                 routeJson.getJSONObject("trip")
+
 
                             val legs =
                                 trip.getJSONArray("legs")
@@ -1892,25 +2453,70 @@ class MainActivity : ComponentActivity() {
                             val firstLeg =
                                 legs.getJSONObject(0)
 
+                            val maneuvers =
+                                firstLeg.getJSONArray("maneuvers")
+
+                            Log.d(
+                                "NAVIS_LANDMARK",
+                                "Maneuvers found: ${maneuvers.length()}"
+                            )
+
                             val shape =
                                 firstLeg.getString("shape")
 
+                            Log.d(
+                                "NAVIS_LANDMARK",
+                                "VALHALLA SHAPE: $shape"
+                            )
+
                             val decodedShape =
-                                com.google.maps.android.PolyUtil.decode(shape)
+                                decodeValhallaPolyline6(shape)
 
                             for (point in decodedShape) {
                                 plannedRoutePoints.add(
                                     Pair(
-                                        point.latitude,
-                                        point.longitude
+                                        point.first,
+                                        point.second
                                     )
                                 )
                             }
+                            Log.d(
+                                "NAVIS_LANDMARK",
+                                "About to search landmarks for ${plannedRoutePoints.size} route points"
+                            )
 
                             Log.d(
                                 "NAVIS_ROUTE",
                                 "Planned route points: ${plannedRoutePoints.size}"
                             )
+
+                            if (plannedRoutePoints.isNotEmpty()) {
+                                val testPoint = plannedRoutePoints[0]
+
+                                Log.d(
+                                    "NAVIS_LANDMARK",
+                                    "TEST ROUTE POINT: Latitude=${testPoint.first}, Longitude=${testPoint.second}"
+                                )
+
+                                searchRouteLandmarks(
+                                    testPoint.first,
+                                    testPoint.second
+                                )
+                            }
+
+                            if (plannedRoutePoints.isNotEmpty()) {
+                                val testPoint = plannedRoutePoints[0]
+
+                                Log.d(
+                                    "NAVIS_LANDMARK",
+                                    "TEST ROUTE POINT: Latitude=${testPoint.first}, Longitude=${testPoint.second}"
+                                )
+
+                                searchRouteLandmarks(
+                                    testPoint.first,
+                                    testPoint.second
+                                )
+                            }
 
                         } catch (e: Exception) {
 
@@ -1963,15 +2569,18 @@ class MainActivity : ComponentActivity() {
                             "HTTP $responseCode: $responseText"
                         )
 
-                        updateStatus?.invoke("Route unavailable")
-
-                        updateResult?.invoke(
-                            "Route request failed.\n\n" +
-                                    "HTTP code: $responseCode\n" +
-                                    responseText
+                        updateStatus?.invoke(
+                            "Walking route could not be found"
                         )
 
-                        speak("I could not find a walking route")
+                        updateResult?.invoke(
+                            "Walking route could not be found"
+                        )
+
+                        speak(
+                            "Sorry, I could not find a walking route to this destination."
+                        )
+
                     }
                 }
 
@@ -3975,6 +4584,15 @@ class MainActivity : ComponentActivity() {
                     }
 
                     override fun onDone(utteranceId: String?) {
+                        if (utteranceId == "NEARBY_OPTIONS") {
+                            nearbyOptionsSpeaking = false
+
+                            if (nearbySelectionActive) {
+                                startVoiceInput()
+                            }
+
+                            return
+                        }
                         Log.d(
                             "NAVIS_TTS",
                             "onDone called: utteranceId=$utteranceId"
@@ -4165,6 +4783,66 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+private fun decodeValhallaPolyline6(
+    encoded: String
+): List<Pair<Double, Double>> {
+
+    val coordinates = mutableListOf<Pair<Double, Double>>()
+
+    var index = 0
+    var latitude = 0
+    var longitude = 0
+
+    while (index < encoded.length) {
+
+        var result = 0
+        var shift = 0
+        var byte: Int
+
+        do {
+            byte = encoded[index++].code - 63
+            result = result or ((byte and 0x1f) shl shift)
+            shift += 5
+        } while (byte >= 0x20)
+
+        val deltaLatitude =
+            if ((result and 1) != 0) {
+                (result shr 1).inv()
+            } else {
+                result shr 1
+            }
+
+        latitude += deltaLatitude
+
+        result = 0
+        shift = 0
+
+        do {
+            byte = encoded[index++].code - 63
+            result = result or ((byte and 0x1f) shl shift)
+            shift += 5
+        } while (byte >= 0x20)
+
+        val deltaLongitude =
+            if ((result and 1) != 0) {
+                (result shr 1).inv()
+            } else {
+                result shr 1
+            }
+
+        longitude += deltaLongitude
+
+        coordinates.add(
+            Pair(
+                latitude / 1_000_000.0,
+                longitude / 1_000_000.0
+            )
+        )
+    }
+
+    return coordinates
+}
+
 
 // ========================================
 // NAVIS SCREEN
@@ -4176,6 +4854,7 @@ fun NavIsScreen(
     recognizedText: String,
     destinationText: String,
     locationText: String,
+    nearbyOptionsText: String,
     onScreenTap: () -> Unit,
     onLocationTap: () -> Unit,
     onLanguageSelected: ((String, String) -> Unit)? = null,
@@ -4416,6 +5095,44 @@ fun NavIsScreen(
                     fontSize = 18.sp,
                     textAlign = TextAlign.Center
                 )
+            }
+
+            if (nearbyOptionsText.isNotEmpty()) {
+
+                Box(
+                    modifier = Modifier
+                        .padding(top = 16.dp)
+                        .background(
+                            color = Color(0xFF1E275C),
+                            shape = RoundedCornerShape(18.dp)
+                        )
+                        .padding(
+                            horizontal = 24.dp,
+                            vertical = 18.dp
+                        )
+                ) {
+
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+
+                        Text(
+                            text = "NEARBY OPTIONS",
+                            color = Color.White,
+                            fontSize = 20.sp,
+                            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                            textAlign = TextAlign.Center
+                        )
+
+                        Text(
+                            text = nearbyOptionsText,
+                            color = Color.White,
+                            fontSize = 19.sp,
+                            textAlign = TextAlign.Start,
+                            modifier = Modifier.padding(top = 12.dp)
+                        )
+                    }
+                }
             }
 
             if (destinationText.isNotEmpty()) {
