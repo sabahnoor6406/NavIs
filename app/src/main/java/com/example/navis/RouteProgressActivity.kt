@@ -38,6 +38,9 @@ object RouteProgressState {
     val routeDistances =
         mutableStateOf<List<String>>(emptyList())
 
+    val routeDirections =
+        mutableStateOf<List<String>>(emptyList())
+
     val currentInstructionIndex =
         mutableStateOf(0)
 

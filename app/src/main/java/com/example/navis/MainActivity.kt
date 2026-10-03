@@ -71,6 +71,8 @@ import androidx.compose.material3.Button
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import com.google.android.libraries.places.api.model.CircularBounds
 import com.google.android.libraries.places.api.net.SearchNearbyRequest
 import com.google.android.gms.maps.model.LatLng
@@ -372,11 +374,11 @@ class MainActivity : ComponentActivity() {
                                             "centerX=$centerX"
                                 )
                                 val isLargeEnough =
-                                    widthRatio >= 0.10f ||
-                                            heightRatio >= 0.15f
+                                    widthRatio >= 0.07f ||
+                                            heightRatio >= 0.10f
 
                                 val potentialObstacle =
-                                    label.confidence >= 0.65f &&
+                                    label.confidence >= 0.55f &&
                                             isInWalkingDirection &&
                                             isLargeEnough
 
@@ -388,9 +390,13 @@ class MainActivity : ComponentActivity() {
                                             "large=$isLargeEnough, " +
                                             "potential=$potentialObstacle"
                                 )
+                                if (!navigationActive) {
+                                    continue
+                                }
 
                                 if (potentialObstacle) {
                                     obstacleDetectedInFrame = true
+                                    lastDetectedObject = label.text
 
                                     Log.d(
                                         "NAVIS_OBSTACLE",
@@ -421,7 +427,7 @@ class MainActivity : ComponentActivity() {
                                             "OBSTACLE CONFIRMED"
                                         )
 
-                                        announceObstacle("object")
+                                        announceObstacle(lastDetectedObject)
                                     }
 
                                     obstacleFrameCount = 0
@@ -4509,16 +4515,20 @@ class MainActivity : ComponentActivity() {
 
             val instructions = mutableListOf<String>()
             val routeDistances = mutableListOf<String>()
+            val routeDirections = mutableListOf<String>()
 
             for (i in 0 until maneuvers.length()) {
 
                 val maneuver = maneuvers.getJSONObject(i)
                 val instruction = maneuver.optString("instruction")
+                val direction = maneuver.optString("type")
+                routeDirections.add(direction)
 
                 val length =
                     maneuver.optDouble("length", 0.0)
 
                 if (instruction.isNotEmpty()) {
+                    routeDirections.add(direction)
 
                     instructions.add(
                         translateNavigationInstruction(instruction)
@@ -4640,6 +4650,7 @@ class MainActivity : ComponentActivity() {
             currentRouteInstructions = instructions
             RouteProgressState.routeInstructions.value = instructions
             RouteProgressState.routeDistances.value = routeDistances
+            RouteProgressState.routeDirections.value = routeDirections
             for (i in instructions.indices) {
 
                 textToSpeech.speak(
@@ -4704,6 +4715,7 @@ class MainActivity : ComponentActivity() {
         obstacleResumeHandler.postDelayed(
             {
                 resumeInterruptedRoute()
+                obstacleWarningActive = false
             },
             2500L
         )
@@ -5056,6 +5068,57 @@ fun NavIsScreen(
                         fontSize = 16.sp
                     )
                 }
+            }
+        }
+
+        // LIVE TURN-BY-TURN NAVIGATION
+        val currentInstructionIndex by RouteProgressState.currentInstructionIndex
+        val routeInstructions by RouteProgressState.routeInstructions
+        val routeDistances by RouteProgressState.routeDistances
+        val routeDirections by RouteProgressState.routeDirections
+
+        if (routeInstructions.isNotEmpty() &&
+            currentInstructionIndex in routeInstructions.indices
+        ) {
+
+            val currentInstruction =
+                routeInstructions[currentInstructionIndex]
+            val currentDirection =
+                if (currentInstructionIndex in routeDirections.indices)
+                    routeDirections[currentInstructionIndex]
+                else
+                    ""
+
+            val directionArrow = when {
+                currentDirection == "left" ->
+                    "←"
+
+                currentDirection == "right" ->
+                    "→"
+
+                currentDirection == "uturn" ||
+                        currentDirection == "u-turn" ->
+                    "↩"
+
+                else ->
+                    "↑"
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(
+                        start = 10.dp,
+                        top = 70.dp
+                    ),
+                contentAlignment = Alignment.TopStart
+            ) {
+
+                Text(
+                    text = directionArrow,
+                    fontSize = 55.sp,
+                    color = Color.White
+                )
             }
         }
 

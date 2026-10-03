@@ -19,6 +19,17 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
+    flavorDimensions += "version"
+
+    productFlavors {
+        create("real") {
+            dimension = "version"
+        }
+        create("demo") {
+            dimension = "version"
+            applicationIdSuffix = ".demo"
+        }
+    }
 
     buildTypes {
         release {
