@@ -84,6 +84,8 @@ import com.google.android.gms.maps.model.LatLng
 
 
 class MainActivity : ComponentActivity() {
+    private val isDemoMode =
+        BuildConfig.APPLICATION_ID.endsWith(".demo")
     private var lowBatteryWarningGiven = false
 
     private val batteryReceiver = object : BroadcastReceiver() {
@@ -381,6 +383,8 @@ class MainActivity : ComponentActivity() {
                                     label.confidence >= 0.55f &&
                                             isInWalkingDirection &&
                                             isLargeEnough
+                                if (potentialObstacle) {
+                                }
 
                                 Log.d(
                                     "NAVIS_OBSTACLE",
@@ -951,6 +955,11 @@ class MainActivity : ComponentActivity() {
                         askToChangeLanguage()
                         return@registerForActivityResult
                     }
+                    if (isDemoMode) {
+                        updateResult?.invoke(spokenText)
+                        startDemoRoute(spokenText.trim())
+                        return@registerForActivityResult
+                    }
 
                     updateStatus?.invoke("Searching destination...")
                     updateResult?.invoke(spokenText)
@@ -1004,6 +1013,151 @@ class MainActivity : ComponentActivity() {
                 updateStatus?.invoke("Ready")
             }
         }
+
+    private fun startDemoRoute(destination: String) {
+
+        updateStatus?.invoke("Demo route started")
+
+        updateDestination?.invoke(
+            "Destination: $destination"
+        )
+
+        updateResult?.invoke(
+            "Simulated walking route"
+        )
+
+        RouteProgressState.routeInstructions.value = listOf(
+            "Go straight",
+            "Turn left",
+            "Go straight",
+            "Turn right",
+            "U-turn",
+            "Destination ahead"
+        )
+
+        RouteProgressState.currentInstructionIndex.value = 0
+
+        speak("Starting demo navigation to $destination")
+
+        Handler(Looper.getMainLooper()).postDelayed({
+
+            // 1. Go straight
+            RouteProgressState.currentInstructionIndex.value = 0
+            updateStatus?.invoke("Go straight")
+            speak("Go straight")
+
+            Handler(Looper.getMainLooper()).postDelayed({
+
+                // 2. Turn left
+                RouteProgressState.currentInstructionIndex.value = 1
+                updateStatus?.invoke("Turn left")
+                speak("Turn left")
+
+                Handler(Looper.getMainLooper()).postDelayed({
+
+                    // 3. Simulated obstacle
+                    textToSpeech.stop()
+
+                    updateStatus?.invoke("Obstacle detected ahead")
+                    updateResult?.invoke(
+                        "Warning: simulated obstacle detected"
+                    )
+
+                    speak("Warning. Obstacle detected ahead.")
+
+                    Handler(Looper.getMainLooper()).postDelayed({
+
+                        // 4. Obstacle cleared
+                        // 4. Obstacle cleared
+                        RouteProgressState.currentInstructionIndex.value = 2
+
+                        updateStatus?.invoke("Go straight")
+
+                        updateResult?.invoke(
+                            "Simulated walking route"
+                        )
+
+                        speak("Obstacle cleared. Go straight.")
+
+                        Handler(Looper.getMainLooper()).postDelayed({
+
+                            // 5. Simulated off-route
+                            RouteProgressState.isOffRoute.value = true
+
+                            updateStatus?.invoke("You are off route")
+
+                            speak("Warning. You are off route.")
+
+                            Handler(Looper.getMainLooper()).postDelayed({
+
+                                // 6. Back on route
+                                // 6. Back on route
+                                RouteProgressState.isOffRoute.value = false
+
+                                updateStatus?.invoke("Back on route")
+
+                                updateResult?.invoke(
+                                    "Simulated walking route"
+                                )
+
+                                speak(
+                                    "You are back on route. Continue straight."
+                                )
+
+                                Handler(Looper.getMainLooper()).postDelayed({
+
+                                    // 7. Turn right
+                                    RouteProgressState.currentInstructionIndex.value = 3
+                                    updateStatus?.invoke("Turn right")
+                                    speak("Turn right")
+
+                                    Handler(Looper.getMainLooper()).postDelayed({
+
+                                        // 8. U-turn
+                                        RouteProgressState.currentInstructionIndex.value = 4
+                                        updateStatus?.invoke("U-turn")
+                                        speak("Make a U-turn")
+
+                                        Handler(Looper.getMainLooper()).postDelayed({
+
+                                            // 9. Destination ahead
+                                            RouteProgressState.currentInstructionIndex.value = 5
+                                            updateStatus?.invoke("Destination ahead")
+                                            speak("Destination ahead")
+
+                                            Handler(Looper.getMainLooper()).postDelayed({
+
+                                                // 10. Destination reached
+                                                RouteProgressState.destinationReached.value = true
+
+                                                updateStatus?.invoke(
+                                                    "Destination reached"
+                                                )
+
+                                                speak(
+                                                    "You have reached your destination"
+                                                )
+
+                                            }, 3500L)
+
+                                        }, 3500L)
+
+                                    }, 3500L)
+
+                                }, 3500L)
+
+                            }, 4000L)
+
+                        }, 3500L)
+
+                    }, 3000L)
+
+                }, 3500L)
+
+            }, 3500L)
+
+        }, 2500L)
+    }
 
 
     // -------------------------
